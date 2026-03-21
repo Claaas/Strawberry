@@ -1,0 +1,173 @@
+@page "/Payout"
+@rendermode InteractiveServer
+@implements IDisposable
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Harvester")]
+@inject BalanceService BalanceService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+
+<PageTitle>@T("Payout.Title") &ndash; @T("AppName")</PageTitle>
+
+<div class="mx-auto w-full max-w-lg px-4 sm:px-6 py-6">
+
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">@T("Payout.Title")</h1>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="flex justify-center py-16">
+            <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    }
+    else
+    {
+        <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm mb-6">
+            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">@T("Payout.CurrentBalance")</p>
+            <p class="text-4xl font-bold text-gray-900 mt-1 font-mono">&euro; @_balance.ToString("0.00")</p>
+        </div>
+
+        @if (_balance <= 0 && _myRequests.Count == 0)
+        {
+            <div class="bg-white border border-gray-200 rounded-xl p-8 text-center shadow-sm">
+                <p class="text-sm text-gray-600">@T("Payout.NoBalance")</p>
+                <p class="text-xs text-gray-400 mt-1.5">@T("Payout.NoBalanceHint")</p>
+            </div>
+        }
+        else
+        {
+            @if (_pendingRequest != null)
+            {
+                <div class="bg-white border border-amber-300 rounded-xl p-5 shadow-sm mb-4 border-l-4 border-l-amber-400">
+                    <p class="font-semibold text-gray-900 mb-1">@T("Payout.RequestPending")</p>
+                    <p class="text-sm text-gray-600">@T("Payout.RequestPendingText", $"€ {_pendingRequest.Amount:0.00}")</p>
+                    <div class="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                        @T("Payout.RequestPendingHint")
+                    </div>
+                </div>
+            }
+            else if (_balance > 0)
+            {
+                <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm mb-4 flex flex-col gap-3">
+                    <p class="font-semibold text-gray-900">@T("Payout.EndDayTitle")</p>
+                    <p class="text-sm text-gray-600">@((MarkupString)T("Payout.EndDayText", $"<strong>€ {_balance:0.00}</strong>"))</p>
+                    <p class="text-xs text-gray-400">@T("Payout.RequestExplain")</p>
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">@_error</div>
+                    }
+                    <button class="w-full bg-primary hover:bg-primary-dark text-white font-semibold rounded-lg py-3 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            @onclick="RequestPayoutAsync" disabled="@_processing">
+                        @(_processing ? T("Payout.RequestingButton") : T("Payout.RequestButton"))
+                    </button>
+                    <p class="text-xs text-gray-400 text-center">@T("Payout.RequestHint")</p>
+                </div>
+            }
+
+            @if (_myRequests.Count > 0)
+            {
+                <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden mt-4">
+                    <div class="px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-base font-semibold text-gray-900">@T("Payout.HistoryTitle")</h2>
+                    </div>
+                    <div class="flex flex-col divide-y divide-gray-100 md:hidden">
+                        @foreach (var r in _myRequests)
+                        {
+                            <div class="px-4 py-3 flex items-center justify-between gap-2">
+                                <div>
+                                    <p class="text-sm font-mono font-semibold text-gray-900">&euro; @r.Amount.ToString("0.00")</p>
+                                    <p class="text-xs text-gray-400 mt-0.5">@r.RequestedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</p>
+                                </div>
+                                @StatusBadge(r.Status)
+                            </div>
+                        }
+                    </div>
+
+                    <div class="hidden md:block overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                <tr>
+                                    <th class="px-5 py-3 text-left">@T("Payout.ColDate")</th>
+                                    <th class="px-5 py-3 text-right">@T("Payout.ColAmount")</th>
+                                    <th class="px-5 py-3 text-right">@T("Payout.ColStatus")</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                @foreach (var r in _myRequests)
+                                {
+                                    <tr class="hover:bg-gray-50">
+                                        <td class="px-5 py-3 text-gray-600">@r.RequestedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td class="px-5 py-3 text-right font-mono font-semibold text-gray-900">&euro; @r.Amount.ToString("0.00")</td>
+                                        <td class="px-5 py-3 text-right">@StatusBadge(r.Status)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        }
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private bool _processing = false;
+    private string? _userId;
+    private decimal _balance = 0;
+    private string _error = string.Empty;
+    private PayoutRequest? _pendingRequest;
+    private List<PayoutRequest> _myRequests = new();
+
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private Func<Task>? _onChangeSub;
+
+    protected override void OnInitialized()
+    {
+        _onChangeSub = () => InvokeAsync(StateHasChanged);
+        Lang.OnChange += _onChangeSub;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (_userId != null) await LoadAsync();
+        _loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_userId == null) return;
+        _balance = await BalanceService.GetBalanceAsync(_userId);
+        _myRequests = await BalanceService.GetMyRequestsAsync(_userId);
+        _pendingRequest = _myRequests.FirstOrDefault(r => r.Status == PayoutRequestStatus.Pending);
+    }
+
+    private async Task RequestPayoutAsync()
+    {
+        if (_userId == null) return;
+        _processing = true;
+        _error = string.Empty;
+        var result = await BalanceService.CreatePayoutRequestAsync(_userId);
+        if (result != null)
+            await LoadAsync();
+        else
+            _error = T("Payout.RequestFailed");
+        _processing = false;
+    }
+
+    private RenderFragment StatusBadge(PayoutRequestStatus status) => status switch
+    {
+        PayoutRequestStatus.Pending  => @<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">@T("Payout.StatusPending")</span>,
+        PayoutRequestStatus.Approved => @<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">@T("Payout.StatusApproved")</span>,
+        PayoutRequestStatus.Rejected => @<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">@T("Payout.StatusRejected")</span>,
+        _ => @<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-500">—</span>
+    };
+
+    public void Dispose()
+    {
+        if (_onChangeSub != null) Lang.OnChange -= _onChangeSub;
+    }
+}

@@ -1,0 +1,111 @@
+@page "/MyContainers"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Strawberry.Components.Layout
+@implements IDisposable
+@attribute [Authorize(Roles = "Harvester")]
+@inject EventService EventService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+
+<PageTitle>@T("MyContainers.Title") &ndash; @T("AppName")</PageTitle>
+
+<div class="mx-auto w-full max-w-2xl px-4 sm:px-6 py-6">
+
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">@T("MyContainers.Title")</h1>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="flex justify-center py-16">
+            <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    }
+    else
+    {
+        @if (_containers.Count == 0)
+        {
+            <div class="flex flex-col items-center justify-center py-16 text-center">
+                <div class="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-4 text-gray-300" aria-hidden="true">
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <rect x="4" y="4" width="20" height="20" rx="3" stroke="currentColor" stroke-width="1.75"/>
+                        <path d="M9 14h10M14 9v10" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <p class="text-sm font-medium text-gray-700">@T("MyContainers.NoContainers")</p>
+                <p class="text-xs text-gray-400 mt-1">@T("MyContainers.NoContainersHint")</p>
+            </div>
+        }
+        else
+        {
+            <p class="text-sm text-gray-500 mb-4">@T("MyContainers.ShowQrHint")</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                @foreach (var c in _containers)
+                {
+                    var isActive = c.Status == ContainerStatus.InUse;
+                    <div class="bg-white border @(isActive ? "border-primary" : "border-gray-200") rounded-xl shadow-sm overflow-hidden @(isActive ? "ring-1 ring-primary/20" : "")">
+                        <div class="flex items-center justify-between px-4 py-3 border-b @(isActive ? "border-primary/20 bg-primary/5" : "border-gray-100 bg-gray-50")">
+                            <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">@T("MyContainers.Container")</span>
+                            @StatusBadge(c.Status)
+                        </div>
+                        <div class="p-4 flex flex-col items-center">
+                            <QrCodeDisplay Code="@c.QrCode" />
+                            @if (c.WeighingRecords.Any())
+                            {
+                                var latest = c.WeighingRecords.OrderByDescending(w => w.TimestampUtc).First();
+                                <div class="mt-3 flex items-center gap-3 text-sm">
+                                    <span class="font-medium text-gray-700 font-mono">@latest.WeightKg.ToString("F2") kg</span>
+                                    <span class="font-semibold text-green-700 font-mono">&euro; @latest.AmountPaid.ToString("0.00")</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private string? _userId;
+    private List<Container> _containers = new();
+    private Event? _activeEvent;
+
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private Func<Task>? _onChangeSub;
+
+    protected override void OnInitialized()
+    {
+        _onChangeSub = () => InvokeAsync(StateHasChanged);
+        Lang.OnChange += _onChangeSub;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        if (_userId != null)
+        {
+            _activeEvent = await EventService.GetActiveEventAsync();
+            if (_activeEvent != null)
+                _containers = await EventService.GetContainersForUserAsync(_userId, _activeEvent.Id);
+        }
+        _loading = false;
+    }
+
+    private RenderFragment StatusBadge(ContainerStatus status) => status switch
+    {
+        ContainerStatus.Available => @<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">@T("Status.Available")</span>,
+        ContainerStatus.InUse     => @<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">@T("Status.InUse")</span>,
+        _                         => @<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-500">@T("Status.Unknown")</span>
+    };
+
+    public void Dispose()
+    {
+        if (_onChangeSub != null) Lang.OnChange -= _onChangeSub;
+    }
+}

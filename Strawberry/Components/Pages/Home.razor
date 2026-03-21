@@ -1,0 +1,29 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>Strawberry</PageTitle>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = state.User;
+
+        if (user.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/Account/Login", forceLoad: true);
+            return;
+        }
+
+        if (user.IsInRole("Admin"))
+            Navigation.NavigateTo("/Dashboard", forceLoad: true);
+        else if (user.IsInRole("Dropoff"))
+            Navigation.NavigateTo("/DropOff", forceLoad: true);
+        else if (user.IsInRole("Harvester"))
+            Navigation.NavigateTo("/MyContainers", forceLoad: true);
+        else
+            Navigation.NavigateTo("/Login", forceLoad: true);
+    }
+}

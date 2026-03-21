@@ -1,0 +1,22 @@
+@rendermode InteractiveServer
+@inject QrCodeService QrCodeService
+
+@if (!string.IsNullOrEmpty(Code))
+{
+    <div class="qr-wrapper">
+        <img src="data:image/png;base64,@_base64" alt="QR code for @Code" class="qr-code-img" />
+        <div class="qr-code-label">@Code</div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Code { get; set; } = string.Empty;
+
+    private string _base64 = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrEmpty(Code))
+            _base64 = QrCodeService.GenerateQrCodeBase64(Code);
+    }
+}

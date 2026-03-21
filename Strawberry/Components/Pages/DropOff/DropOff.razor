@@ -1,0 +1,443 @@
+@page "/DropOff"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@implements IAsyncDisposable
+@attribute [Authorize(Roles = "Admin,DropOff")]
+@inject WeighingService WeighingSvc
+@inject BalanceService BalanceSvc
+@inject EventService EventSvc
+@inject AuthenticationStateProvider AuthStateProvider
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+@inject IJSRuntime JS
+
+<PageTitle>@T("DropOff.Title") &ndash; @T("AppName")</PageTitle>
+
+<div class="mx-auto w-full max-w-7xl px-4 sm:px-6 py-6">
+
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">@T("DropOff.Title")</h1>
+        <p class="text-sm text-gray-500 mt-0.5">@T("DropOff.Subtitle")</p>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="flex justify-center py-16">
+            <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-100">
+                    <h2 class="text-base font-semibold text-gray-900">@T("DropOff.ScanTitle")</h2>
+                </div>
+                <div class="p-5">
+                    <div class="flex rounded-lg overflow-hidden border border-gray-200 mb-5 w-full">
+                        <button class="flex-1 py-2.5 text-sm font-medium transition-colors @(_inputMode == "manual" ? "bg-green-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50")"
+                                @onclick='async () => await SetInputModeAsync("manual")'>
+                            @T("DropOff.ModeManual")
+                        </button>
+                        <button class="flex-1 py-2.5 text-sm font-medium transition-colors @(_inputMode == "camera" ? "bg-green-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50")"
+                                @onclick='async () => await SetInputModeAsync("camera")'>
+                            @T("DropOff.ModeCamera")
+                        </button>
+                    </div>
+
+                    @if (_inputMode == "camera")
+                    {
+                        <p class="text-sm text-gray-500 mb-3">@T("DropOff.CameraHint")</p>
+                        <div class="relative w-full rounded-xl overflow-hidden bg-black aspect-square max-w-xs mx-auto">
+                            <div id="qr-video" style="width:100%; height:100%; background:black; position:relative;"></div>
+                            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <div class="w-3/5 aspect-square border-2 border-white/70 rounded-xl"></div>
+                            </div>
+                        </div>
+                        @if (_scanning)
+                        {
+                            <p class="text-sm text-gray-400 text-center mt-2">@T("DropOff.Scanning")</p>
+                        }
+                        <p class="text-sm text-gray-500 mt-4 mb-3">@T("DropOff.ScanHint")</p>
+                    }
+                    else
+                    {
+                        <p class="text-sm text-gray-500 mb-3">@T("DropOff.ScanHint")</p>
+                    }
+
+                    <div class="flex gap-2">
+                        <input class="flex-1 px-4 py-3 text-xl font-mono tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-700/30 focus:border-green-700 uppercase"
+                               type="text"
+                               @bind="_qrInput"
+                               @bind:event="oninput"
+                               @onkeydown="OnQrKeyDown"
+                               placeholder="XXXXXX"
+                               maxlength="6"
+                               autocomplete="off"
+                               autofocus="@(_inputMode == "manual")" />
+                        <button class="bg-green-700 hover:bg-green-800 text-white rounded-lg px-4 flex items-center justify-center transition-colors"
+                                @onclick="LookupContainerAsync" aria-label="Search">
+                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                                <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="2"/>
+                                <path d="M13 13L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    @if (_scanError != null)
+                    {
+                        <div class="mt-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">@_scanError</div>
+                    }
+
+                    @if (_foundContainer != null)
+                    {
+                        <div class="mt-4 border border-green-200 rounded-xl overflow-hidden bg-green-50">
+                            <div class="flex items-center gap-2 px-4 py-3 border-b border-green-200 bg-green-100">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                    <circle cx="8" cy="8" r="7" fill="#16a34a" opacity="0.2"/>
+                                    <path d="M4.5 8l2.5 2.5 4.5-5" stroke="#16a34a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <span class="text-sm font-semibold text-green-800">@T("DropOff.ContainerFound")</span>
+                            </div>
+                            <div class="p-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm bg-white">
+                                <span class="text-gray-500">@T("DropOff.LabelQrCode")</span>
+                                <span class="font-mono font-medium text-gray-900">@_foundContainer.QrCode</span>
+                                <span class="text-gray-500">@T("DropOff.LabelHarvester")</span>
+                                <span class="font-medium text-gray-900">@(_foundContainer.AssignedUser != null ? $"{_foundContainer.AssignedUser.FirstName} {_foundContainer.AssignedUser.LastName}" : T("DropOff.NoHarvesterAssigned"))</span>
+                                <span class="text-gray-500">@T("DropOff.LabelEvent")</span>
+                                <span class="text-gray-700">@(_activeEvent?.Name ?? "-")</span>
+                                <span class="text-gray-500">@T("DropOff.LabelPricePerKg")</span>
+                                <span class="font-mono text-gray-700">&euro; @(_activeEvent?.PricePerKg.ToString("0.00") ?? "-")</span>
+                            </div>
+
+                            <div class="p-4 border-t border-green-200 flex flex-col gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">@T("DropOff.WeightLabel")</label>
+                                    <input class="w-full px-4 py-3 text-xl font-mono text-center border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                                           type="number"
+                                           step="0.01"
+                                           min="0"
+                                           @bind="_weightInput"
+                                           placeholder="@T("DropOff.WeightPlaceholder")"
+                                           inputmode="decimal" />
+                                </div>
+
+                                @if (_weightInput > 0 && _activeEvent != null)
+                                {
+                                    <div class="flex items-center justify-between bg-green-50 rounded-lg px-4 py-3">
+                                        <span class="text-sm font-medium text-gray-600">@T("DropOff.PayoutPreview")</span>
+                                        <span class="font-mono font-bold text-green-700 text-lg">&euro; @((_weightInput * _activeEvent.PricePerKg).ToString("0.00"))</span>
+                                    </div>
+                                }
+
+                                <button class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg py-3 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        @onclick="SaveWeighingAsync"
+                                        disabled="@(_saving || _weightInput <= 0)">
+                                    @(_saving ? T("DropOff.SavingButton") : T("DropOff.SaveButton"))
+                                </button>
+
+                                @if (!string.IsNullOrEmpty(_saveMsg))
+                                {
+                                    <div class="@(_saveError ? "bg-red-50 border-red-200 text-red-700" : "bg-green-50 border-green-200 text-green-700") border rounded-lg px-4 py-3 text-sm">
+                                        @_saveMsg
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                    <h2 class="text-base font-semibold text-gray-900">@T("DropOff.PayoutRequests")</h2>
+                    @if (_pendingRequests.Count > 0)
+                    {
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">@_pendingRequests.Count</span>
+                    }
+                </div>
+
+                @if (_pendingRequests.Count == 0)
+                {
+                    <div class="py-14 text-center text-sm text-gray-400">@T("DropOff.NoPendingRequests")</div>
+                }
+                else
+                {
+                    <ul class="divide-y divide-gray-100">
+                        @foreach (var req in _pendingRequests)
+                        {
+                            <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">@req.User.FirstName @req.User.LastName</p>
+                                    <p class="text-xs text-gray-500 mt-0.5">
+                                        @req.RequestedAtUtc.ToLocalTime().ToString("HH:mm")
+                                        <span class="mx-1">&bull;</span>
+                                        <span class="font-mono font-semibold text-gray-700">&euro; @req.Amount.ToString("0.00")</span>
+                                    </p>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button class="flex-1 sm:flex-none px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                                            @onclick="() => ApproveRequestAsync(req)"
+                                            disabled="@_processingPayout">
+                                        @T("DropOff.Approve")
+                                    </button>
+                                    <button class="flex-1 sm:flex-none px-4 py-2 border border-gray-300 text-gray-600 hover:bg-gray-50 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                                            @onclick="() => RejectRequestAsync(req)"
+                                            disabled="@_processingPayout">
+                                        @T("DropOff.Reject")
+                                    </button>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                @if (!string.IsNullOrEmpty(_payoutMsg))
+                {
+                    <div class="mx-5 mb-4 @(_payoutError ? "bg-red-50 border-red-200 text-red-700" : "bg-green-50 border-green-200 text-green-700") border rounded-lg px-4 py-3 text-sm">
+                        @_payoutMsg
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100">
+                <h2 class="text-base font-semibold text-gray-900">@T("DropOff.RecentWeighings")</h2>
+            </div>
+            @if (_recentWeighings.Count == 0)
+            {
+                <div class="py-14 text-center text-sm text-gray-400">@T("Stats.NoWeighings")</div>
+            }
+            else
+            {
+                <div class="flex flex-col divide-y divide-gray-100 md:hidden">
+                    @foreach (var w in _recentWeighings)
+                    {
+                        <div class="px-4 py-3 flex flex-col gap-1">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs text-gray-400">@w.TimestampUtc.ToLocalTime().ToString("HH:mm")</span>
+                                <span class="font-mono font-semibold text-gray-900">&euro; @w.AmountPaid.ToString("0.00")</span>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm text-gray-700">@(w.Container.AssignedUser != null ? $"{w.Container.AssignedUser.FirstName} {w.Container.AssignedUser.LastName}" : "-")</span>
+                                <span class="text-xs font-mono text-gray-500">@w.Container.QrCode &middot; @w.WeightKg.ToString("0.00") kg</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="hidden md:block overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        <tr>
+                            <th class="px-5 py-3 text-left">@T("Stats.ColTime")</th>
+                            <th class="px-5 py-3 text-left">@T("Stats.ColContainer")</th>
+                            <th class="px-5 py-3 text-left">@T("Stats.ColHarvester")</th>
+                            <th class="px-5 py-3 text-right">@T("Stats.ColWeight")</th>
+                            <th class="px-5 py-3 text-right">@T("Stats.ColAmount")</th>
+                        </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                        @foreach (var w in _recentWeighings)
+                        {
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-5 py-3 text-gray-500 whitespace-nowrap">@w.TimestampUtc.ToLocalTime().ToString("HH:mm")</td>
+                                <td class="px-5 py-3 font-mono text-gray-700">@w.Container.QrCode</td>
+                                <td class="px-5 py-3 text-gray-700">@(w.Container.AssignedUser != null ? $"{w.Container.AssignedUser.FirstName} {w.Container.AssignedUser.LastName}" : "-")</td>
+                                <td class="px-5 py-3 text-right font-mono text-gray-700">@w.WeightKg.ToString("0.00") kg</td>
+                                <td class="px-5 py-3 text-right font-mono font-semibold text-gray-900">&euro; @w.AmountPaid.ToString("0.00")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+@code {
+    private bool _loading = true;
+    private string _qrInput = string.Empty;
+    private Container? _foundContainer;
+    private string? _scanError;
+
+    private decimal _weightInput = 0;
+    private bool _saving = false;
+    private string _saveMsg = string.Empty;
+    private bool _saveError = false;
+
+    private bool _processingPayout = false;
+    private string _payoutMsg = string.Empty;
+    private bool _payoutError = false;
+
+    private Event? _activeEvent;
+    private List<PayoutRequest> _pendingRequests = new();
+    private List<WeighingRecord> _recentWeighings = new();
+    private string? _currentUserId;
+
+    private string _inputMode = "manual";
+    private bool _scanning = false;
+    private IJSObjectReference? _jsModule;
+    private DotNetObjectReference<DropOff>? _dotNetRef;
+
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private Func<Task>? _onChangeSub;
+
+    protected override void OnInitialized()
+    {
+        _onChangeSub = () => InvokeAsync(StateHasChanged);
+        Lang.OnChange += _onChangeSub;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        _currentUserId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        _activeEvent = await EventSvc.GetActiveEventAsync();
+        await RefreshAsync();
+        _loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/qrScanner.js");
+            _dotNetRef = DotNetObjectReference.Create(this);
+        }
+    }
+
+    private async Task SetInputModeAsync(string mode)
+    {
+        if (_inputMode == mode) return;
+        if (_inputMode == "camera") await StopScannerAsync();
+        _inputMode = mode;
+        _scanError = null;
+        _foundContainer = null;
+        _qrInput = string.Empty;
+        if (mode == "camera")
+        {
+            StateHasChanged();
+            await Task.Delay(100);
+            await StartScannerAsync();
+        }
+    }
+
+    private async Task StartScannerAsync()
+    {
+        if (_jsModule == null || _dotNetRef == null) return;
+        _scanning = true;
+        await _jsModule.InvokeVoidAsync("startScanner", "qr-video", _dotNetRef);
+    }
+
+    private async Task StopScannerAsync()
+    {
+        _scanning = false;
+        if (_jsModule != null)
+            await _jsModule.InvokeVoidAsync("stopScanner", "qr-video");
+    }
+
+    [JSInvokable]
+    public async Task OnCodeScanned(string code)
+    {
+        await StopScannerAsync();
+        _inputMode = "manual";
+        _qrInput = code;
+        await LookupContainerAsync();
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnScanError(string message)
+    {
+        _scanning = false;
+        _scanError = message;
+        _inputMode = "manual";
+        StateHasChanged();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _pendingRequests = await BalanceSvc.GetPendingRequestsAsync();
+        if (_activeEvent != null)
+            _recentWeighings = (await WeighingSvc.GetWeighingRecordsAsync(_activeEvent.Id)).Take(15).ToList();
+    }
+
+    private async Task OnQrKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LookupContainerAsync();
+    }
+
+    private async Task LookupContainerAsync()
+    {
+        _scanError = null;
+        _foundContainer = null;
+        _saveMsg = string.Empty;
+        var code = _qrInput.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(code)) return;
+        var container = await WeighingSvc.FindContainerByQrCodeAsync(code);
+        if (container == null)
+            _scanError = T("DropOff.NotFound", code);
+        else
+            _foundContainer = container;
+    }
+
+    private async Task SaveWeighingAsync()
+    {
+        if (_foundContainer == null || _activeEvent == null || _weightInput <= 0 || _currentUserId == null) return;
+        _saving = true;
+        var record = await WeighingSvc.RecordWeightAsync(_foundContainer.Id, _weightInput, _currentUserId);
+        if (record != null)
+        {
+            _saveMsg = T("DropOff.SaveSuccess", _weightInput.ToString("0.00"), $"€ {record.AmountPaid:0.00}");
+            _saveError = false;
+            _weightInput = 0;
+            _qrInput = string.Empty;
+            _foundContainer = null;
+            await RefreshAsync();
+        }
+        else
+        {
+            _saveMsg = T("DropOff.SaveError");
+            _saveError = true;
+        }
+        _saving = false;
+    }
+
+    private async Task ApproveRequestAsync(PayoutRequest req)
+    {
+        if (_currentUserId == null) return;
+        _processingPayout = true;
+        _payoutMsg = string.Empty;
+        var ok = await BalanceSvc.ApprovePayoutRequestAsync(req.Id, _currentUserId);
+        _payoutMsg = ok ? T("DropOff.PayoutApproved", req.User.FirstName, $"€ {req.Amount:0.00}") : T("DropOff.PayoutFailed");
+        _payoutError = !ok;
+        _processingPayout = false;
+        await RefreshAsync();
+    }
+
+    private async Task RejectRequestAsync(PayoutRequest req)
+    {
+        if (_currentUserId == null) return;
+        _processingPayout = true;
+        _payoutMsg = string.Empty;
+        var ok = await BalanceSvc.RejectPayoutRequestAsync(req.Id, _currentUserId);
+        _payoutMsg = ok ? T("DropOff.PayoutRejected", req.User.FirstName) : T("DropOff.PayoutFailed");
+        _payoutError = !ok;
+        _processingPayout = false;
+        await RefreshAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_onChangeSub != null) Lang.OnChange -= _onChangeSub;
+        await StopScannerAsync();
+        _dotNetRef?.Dispose();
+        if (_jsModule != null)
+            await _jsModule.DisposeAsync();
+    }
+}

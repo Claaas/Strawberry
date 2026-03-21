@@ -1,0 +1,162 @@
+@page "/Account/Login"
+@using System.ComponentModel.DataAnnotations
+@using System.Security.Claims
+@inject AuthenticationStateProvider AuthStateProvider
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+
+<PageTitle>@T("Login.Title") &ndash; @T("AppName")</PageTitle>
+
+<div class="min-h-dvh flex items-center justify-center bg-zinc-100 px-4 py-6">
+    <div class="w-full max-w-sm bg-white border border-zinc-200 rounded-xl shadow-md overflow-hidden">
+        <div class="bg-red-700 px-7 pt-8 pb-7 text-center flex flex-col items-center gap-1.5">
+            <span aria-hidden="true">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                    <path d="M20 5C20 5 8 14 8 24a12 12 0 0024 0C32 14 20 5 20 5z" fill="#b91c1c" opacity="0.9"/>
+                    <circle cx="15" cy="21" r="1.75" fill="#fca5a5"/>
+                    <circle cx="22" cy="17" r="1.75" fill="#fca5a5"/>
+                    <circle cx="25" cy="25" r="1.75" fill="#fca5a5"/>
+                    <path d="M20 5C20 5 18 2 15 2" stroke="#166534" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>
+            </span>
+            <h1 class="text-xl font-extrabold text-white tracking-tight">@T("AppName")</h1>
+            <p class="text-[0.8125rem] text-white/75">@T("AppSubtitle")</p>
+            <div class="flex gap-1.5 mt-2.5">
+                <a href="/Account/Login?culture=en" 
+                   class="inline-flex items-center justify-center border-[1.5px] rounded px-2 py-1 text-[0.6875rem] font-bold tracking-wide transition-colors @(Lang.Language == "en" ? "bg-white/25 border-white text-white" : "border-white/40 text-white/80 hover:bg-white/15 hover:border-white/70 hover:text-white")">
+                    EN
+                </a>
+
+                <a href="/Account/Login?culture=nl" 
+                   class="inline-flex items-center justify-center border-[1.5px] rounded px-2 py-1 text-[0.6875rem] font-bold tracking-wide transition-colors @(Lang.Language == "nl" ? "bg-white/25 border-white text-white" : "border-white/40 text-white/80 hover:bg-white/15 hover:border-white/70 hover:text-white")">
+                    NL
+                </a>
+            </div>
+        </div>
+
+        <div class="px-7 py-7 flex flex-col gap-4">
+            <h2 class="text-base font-bold text-zinc-900">@T("Login.Title")</h2>
+
+            @if (_error || _loginFailed)
+            {
+                <div class="px-3.5 py-2.5 rounded text-sm font-medium border bg-red-50 text-red-800 border-red-300">
+                    @T("Login.InvalidCredentials")
+                </div>
+            }
+
+            <div class="flex flex-col gap-3.5">
+                <EditForm Model="Input" OnValidSubmit="HandleLogin" FormName="login">
+                    <DataAnnotationsValidator />
+                
+                    <input type="hidden" name="returnUrl" value="/" />
+
+                    <div class="flex flex-col gap-1.5">
+                        <label class="text-[0.8125rem] font-semibold text-zinc-900" for="username">@T("Login.UsernameLabel")</label>
+                        <InputText id="username" @bind-Value="Input.Username"
+                                   class="w-full px-3.5 py-2.5 border-[1.5px] border-zinc-200 rounded-md text-base bg-white text-zinc-900 min-h-[44px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" placeholder="@T("Login.UsernamePlaceholder")" required/>
+                    </div>
+
+                    <div class="flex flex-col gap-1.5">
+                        <label class="text-[0.8125rem] font-semibold text-zinc-900" for="password">@T("Login.PasswordLabel")</label>
+                        <InputText type="password" id="password" @bind-Value="Input.Password"
+                                   class="w-full px-3.5 py-2.5 border-[1.5px] border-zinc-200 rounded-md text-base bg-white text-zinc-900 min-h-[44px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" placeholder="@T("Login.PasswordPlaceholder")" required/>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <InputCheckbox @bind-Value="Input.RememberMe"/>
+                        <label>@T("Login.RememberMe")</label>
+                    </div>
+
+                    <button type="submit" class="w-full inline-flex items-center justify-center px-4 py-3 rounded-md border-[1.5px] border-red-700 bg-red-700 text-white text-[0.9375rem] font-semibold min-h-[44px] cursor-pointer transition-colors hover:bg-red-800 hover:border-red-800 active:opacity-90">
+                        @T("Login.SignInButton")
+                    </button>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Inject]
+    private SignInManager<AppUser> SignInManager { get; set; } = default!;
+    [Inject]
+    private ILogger<Login> Logger { get; set; } = default!;
+    [Inject]
+    private IdentityRedirectManager RedirectManager { get; set; } = default!;
+    
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+    
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private LoginModel Input { get; set; } = new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+    
+    [SupplyParameterFromQuery]
+    private bool _error { get; set; }
+    
+    [SupplyParameterFromQuery]
+    public string? culture { get; set; }
+    
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private bool _loginFailed;
+    private string? errorMessage;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(culture) && culture != Lang.Language)
+        {
+            await Lang.SetLanguageAsync(culture);
+        }
+    }
+    
+    private async Task HandleLogin()
+    {
+        _loginFailed = false;
+
+        var result = await SignInManager.PasswordSignInAsync(Input.Username, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("User logged in.");
+            var user = await SignInManager.UserManager.FindByNameAsync(Input.Username);
+        
+            if (user != null)
+            {
+                var userPrincipal = await SignInManager.CreateUserPrincipalAsync(user);
+                RedirectByRole(userPrincipal);
+            }
+        }
+        else
+        {
+            _loginFailed = true;
+        }
+    }
+
+    private void RedirectByRole(ClaimsPrincipal user)
+    {
+        
+        if (user.IsInRole("Admin"))
+            RedirectManager.RedirectTo("/Dashboard");
+        else if (user.IsInRole("DropOff"))
+            RedirectManager.RedirectTo("/DropOff");
+        else
+            RedirectManager.RedirectTo("/MyContainers");
+    }
+    
+    public class LoginModel
+    {
+        [Required]
+        public string Username { get; set; } = "";
+
+        [Required]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+        
+        [Display(Name = "Remember me?")]
+        public bool RememberMe { get; set; }
+    }
+}

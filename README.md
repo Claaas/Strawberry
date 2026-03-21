@@ -1,2 +1,3 @@
-# Strawberry
+The story behind this repo is that we asked a company to develop a small cloud app (which we only need for 6 days in one year) for this year’s strawberry season. They created mockups for us and everything looked good to us, but when they told us the cloud app would cost more than €5,000 (web server hosting + database weren’t included), we thought they were trolling and laughed, but they were dead serious, so we said we will pay for the mockups and end our collaboration with them. I was already mad that day, so I thought to myself, why don't I just create the same software using AI?
 
+So I created this with Grok AI in around 3 hours for less than 30€, while I listened to 'Ariana Grande – 7 rings' on repeat

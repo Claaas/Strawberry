@@ -1,0 +1,21 @@
+@inject NavigationManager NavigationManager
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    protected override void OnInitialized()
+    {
+        var returnUrl = "~/" + NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        var redirectUrl = $"/Account/Login?returnUrl={Uri.EscapeDataString(returnUrl)}";
+
+        if (HttpContext is not null)
+        {
+            HttpContext.Response.Redirect(redirectUrl);
+        }
+        else
+        {
+            NavigationManager.NavigateTo(redirectUrl, forceLoad: true);
+        }
+    }
+}

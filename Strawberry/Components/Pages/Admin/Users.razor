@@ -1,0 +1,439 @@
+@page "/Admin/Users"
+@rendermode InteractiveServer
+@implements IDisposable
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@inject UserManager<AppUser> UserManager
+@inject RoleManager<IdentityRole> RoleManager
+@inject EventService EventService
+@inject AuditService AuditService
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+
+<PageTitle>@T("Users.Title") &ndash; @T("AppName")</PageTitle>
+
+<div class="max-w-[1400px] mx-auto px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
+    <header class="flex items-start justify-between gap-4 mb-6 flex-wrap">
+        <div>
+            <h1 class="text-2xl font-bold text-zinc-900 tracking-tight leading-tight">@T("Users.Title")</h1>
+            <p class="text-sm text-zinc-500 mt-1">@T("Users.Subtitle")</p>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="spinner"></div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 lg:grid-cols-[340px_1fr] xl:grid-cols-[380px_1fr] gap-5 items-start">
+            <div class="flex flex-col gap-4">
+                <div class="bg-white rounded-lg border border-zinc-200 shadow-sm p-5">
+                    <div class="flex items-center gap-2.5 mb-4 pb-3 border-b border-zinc-200">
+                        <h2 class="text-[0.9375rem] font-bold text-zinc-900 tracking-tight">@T("Users.CreateUser")</h2>
+                    </div>
+                    <div class="flex flex-col gap-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.FirstName")</label>
+                                <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" @bind="_firstName" placeholder="John" />
+                            </div>
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.LastName")</label>
+                                <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" @bind="_lastName" placeholder="Smith" />
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.Username")</label>
+                            <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" @bind="_username" placeholder="@T("Users.UsernamePlaceholder")" />
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.Password")</label>
+                            <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" type="password" @bind="_password"
+                                   placeholder="@T("Users.PasswordPlaceholder")" />
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.Role")</label>
+                            <select class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors form-select" @bind="_role">
+                                <option value="Harvester">@T("Users.RoleHarvester")</option>
+                                <option value="DropOff">@T("Users.RoleDropOff")</option>
+                                <option value="Admin">@T("Users.RoleAdmin")</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.AssignToEvent")</label>
+                            <select class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors form-select" @bind="_assignEventId">
+                                <option value="0">@T("Users.NoEventAssignment")</option>
+                                @foreach (var evt in _events)
+                                {
+                                    <option value="@evt.Id">@evt.Name</option>
+                                }
+                            </select>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_createMsg))
+                        {
+                            <div class="px-3.5 py-2.5 rounded text-sm font-medium border @(_createError ? "bg-red-50 text-red-800 border-red-300" : "bg-green-50 text-green-700 border-green-300")">@_createMsg</div>
+                        }
+                        <button class="inline-flex items-center justify-center px-4 py-2 rounded border-[1.5px] border-red-700 bg-red-700 text-white text-sm font-semibold min-h-9 cursor-pointer transition-colors hover:bg-red-800 disabled:opacity-45" @onclick="CreateUserAsync">
+                            @T("Users.CreateUserButton")
+                        </button>
+                    </div>
+                </div>
+
+                @if (_editingUser != null)
+                {
+                    <div class="bg-white rounded-lg border-[1.5px] border-red-700 shadow-sm p-5">
+                        <div class="flex items-center gap-2.5 mb-4 pb-3 border-b border-zinc-200">
+                            <h2 class="text-[0.9375rem] font-bold text-zinc-900 tracking-tight">@T("Users.EditUser"): @_editingUser.UserName</h2>
+                        </div>
+                        <div class="flex flex-col gap-4">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <div class="flex flex-col gap-1.5">
+                                    <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.FirstName")</label>
+                                    <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" @bind="_editFirstName" />
+                                </div>
+                                <div class="flex flex-col gap-1.5">
+                                    <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.LastName")</label>
+                                    <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" @bind="_editLastName" />
+                                </div>
+                            </div>
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.Role")</label>
+                                <select class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors form-select" @bind="_editRole">
+                                    <option value="Harvester">@T("Users.RoleHarvester")</option>
+                                    <option value="DropOff">@T("Users.RoleDropOff")</option>
+                                    <option value="Admin">@T("Users.RoleAdmin")</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.NewPassword")</label>
+                                <input class="w-full px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors" type="password" @bind="_editPassword"
+                                       placeholder="@T("Users.NewPasswordPlaceholder")" />
+                            </div>
+
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-[0.8125rem] font-semibold text-zinc-900">@T("Users.EventAssignments")</label>
+                                @if (_editUserEvents.Count > 0)
+                                {
+                                    <div class="flex flex-col gap-1.5 mb-2">
+                                        @foreach (var evt in _editUserEvents)
+                                        {
+                                            <div class="flex items-center justify-between px-2.5 py-1.5 bg-zinc-50 rounded border border-zinc-200">
+                                                <span class="text-sm text-zinc-900">@evt.Name @(evt.IsActive ? "(actief)" : "")</span>
+                                                <button class="inline-flex items-center justify-center px-2.5 py-1 rounded border-[1.5px] border-zinc-200 bg-transparent text-zinc-500 text-xs font-semibold min-h-7 cursor-pointer transition-colors hover:bg-zinc-50 hover:text-zinc-900" @onclick="() => RemoveUserFromEventAsync(evt.Id)">
+                                                    @T("Users.RemoveFromEvent")
+                                                </button>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="text-xs text-zinc-500">@T("Users.NoEventAssignments")</p>
+                                }
+                                <div class="flex gap-2 mt-1">
+                                    <select class="flex-1 px-3 py-2 border-[1.5px] border-zinc-200 rounded text-[0.9375rem] bg-white text-zinc-900 min-h-[38px] focus:outline-none focus:border-red-700 focus:ring-2 focus:ring-red-700/10 transition-colors form-select" @bind="_editAddEventId">
+                                        <option value="0">@T("Users.SelectEventToAdd")</option>
+                                        @foreach (var evt in _events.Where(e => !_editUserEvents.Any(ue => ue.Id == e.Id)))
+                                        {
+                                            <option value="@evt.Id">@evt.Name</option>
+                                        }
+                                    </select>
+                                    <button class="inline-flex items-center justify-center px-4 py-2 rounded border-[1.5px] border-zinc-200 bg-white text-zinc-900 text-sm font-semibold min-h-9 cursor-pointer transition-colors hover:bg-zinc-50 hover:border-zinc-400 disabled:opacity-45" @onclick="AddUserToEventAsync" disabled="@(_editAddEventId == 0)">
+                                        @T("Users.AddToEvent")
+                                    </button>
+                                </div>
+                            </div>
+
+                            @if (!string.IsNullOrEmpty(_editMsg))
+                            {
+                                <div class="px-3.5 py-2.5 rounded text-sm font-medium border @(_editError ? "bg-red-50 text-red-800 border-red-300" : "bg-green-50 text-green-700 border-green-300")">@_editMsg</div>
+                            }
+                            <div class="flex gap-2 flex-wrap">
+                                <button class="inline-flex items-center justify-center px-4 py-2 rounded border-[1.5px] border-red-700 bg-red-700 text-white text-sm font-semibold min-h-9 cursor-pointer transition-colors hover:bg-red-800" @onclick="SaveUserEditAsync">@T("Users.SaveUser")</button>
+                                <button class="inline-flex items-center justify-center px-4 py-2 rounded border-[1.5px] border-zinc-200 bg-transparent text-zinc-500 text-sm font-semibold min-h-9 cursor-pointer transition-colors hover:bg-zinc-50 hover:text-zinc-900" @onclick="() => _editingUser = null">@T("Dashboard.Cancel")</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="bg-white rounded-lg border border-zinc-200 shadow-sm p-5">
+                <div class="flex items-center gap-2.5 mb-4 pb-3 border-b border-zinc-200">
+                    <h2 class="text-[0.9375rem] font-bold text-zinc-900 tracking-tight">@T("Users.AllUsers")</h2>
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[0.6875rem] font-bold uppercase tracking-wide border bg-zinc-50 text-zinc-500 border-zinc-200">@_allUsers.Count</span>
+                </div>
+                @if (_allUsers.Count == 0)
+                {
+                    <p class="text-sm text-zinc-500">@T("Users.NoUsers")</p>
+                }
+                else
+                {
+                    <div class="flex flex-col divide-y divide-zinc-100 md:hidden">
+                        @foreach (var row in _allUsers)
+                        {
+                            <div class="py-3 px-1 flex flex-col gap-1.5">
+                                <div class="flex items-center justify-between gap-2">
+                                    <div>
+                                        <p class="text-sm font-semibold text-zinc-900">@row.User.FirstName @row.User.LastName</p>
+                                        <p class="text-xs text-zinc-400 font-mono mt-0.5">@row.User.UserName</p>
+                                    </div>
+                                    <div class="flex gap-1 shrink-0">
+                                        @foreach (var r in row.Roles)
+                                        {
+                                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[0.6875rem] font-bold uppercase tracking-wide border @RoleBadgeClass(r)">@r</span>
+                                        }
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm font-mono text-zinc-700">&euro; @row.User.Balance.ToString("0.00")</span>
+                                    <div class="flex gap-1.5">
+                                        <button class="inline-flex items-center justify-center px-2.5 py-1 rounded border-[1.5px] border-red-700 bg-transparent text-red-700 text-xs font-semibold min-h-7 cursor-pointer transition-colors hover:bg-red-50" @onclick="() => StartUserEdit(row.User, row.Roles)">@T("Dashboard.EditEvent")</button>
+                                        <button class="inline-flex items-center justify-center px-2.5 py-1 rounded border-[1.5px] border-red-800 bg-red-800 text-white text-xs font-semibold min-h-7 cursor-pointer transition-colors hover:bg-red-900" @onclick="() => ConfirmDeleteUser(row.User.Id)">@T("Users.DeleteUser")</button>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="hidden md:block overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-zinc-50 text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+                                <tr>
+                                    <th class="px-4 py-3 text-left">@T("Users.ColName")</th>
+                                    <th class="px-4 py-3 text-left">@T("Users.ColUsername")</th>
+                                    <th class="px-4 py-3 text-left">@T("Users.ColRole")</th>
+                                    <th class="px-4 py-3 text-right">@T("Users.ColBalance")</th>
+                                    <th class="px-4 py-3"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-zinc-100">
+                                @foreach (var row in _allUsers)
+                                {
+                                    <tr class="hover:bg-zinc-50 transition-colors">
+                                        <td class="px-4 py-3 font-medium text-zinc-900">@row.User.FirstName @row.User.LastName</td>
+                                        <td class="px-4 py-3 font-mono text-zinc-700">@row.User.UserName</td>
+                                        <td class="px-4 py-3">
+                                            @foreach (var r in row.Roles)
+                                            {
+                                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[0.6875rem] font-bold uppercase tracking-wide border @RoleBadgeClass(r)">@r</span>
+                                            }
+                                        </td>
+                                        <td class="px-4 py-3 text-right font-mono text-zinc-700">&euro; @row.User.Balance.ToString("0.00")</td>
+                                        <td class="px-4 py-3 text-right">
+                                            <div class="flex gap-1.5 justify-end">
+                                                <button class="inline-flex items-center justify-center px-2.5 py-1 rounded border-[1.5px] border-red-700 bg-transparent text-red-700 text-xs font-semibold min-h-7 cursor-pointer transition-colors hover:bg-red-50" @onclick="() => StartUserEdit(row.User, row.Roles)">@T("Dashboard.EditEvent")</button>
+                                                <button class="inline-flex items-center justify-center px-2.5 py-1 rounded border-[1.5px] border-red-800 bg-red-800 text-white text-xs font-semibold min-h-7 cursor-pointer transition-colors hover:bg-red-900" @onclick="() => ConfirmDeleteUser(row.User.Id)">@T("Users.DeleteUser")</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@if (_confirmDeleteUserId != null)
+{
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+        <div class="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 flex flex-col gap-4">
+            <h3 class="text-base font-bold text-zinc-900">@T("Users.ConfirmDeleteTitle")</h3>
+            <p class="text-sm text-zinc-600">@T("Users.ConfirmDeleteText")</p>
+            <div class="flex gap-2 justify-end">
+                <button class="inline-flex items-center justify-center px-4 py-2 rounded border-[1.5px] border-zinc-200 bg-white text-zinc-700 text-sm font-semibold cursor-pointer hover:bg-zinc-50" @onclick="() => _confirmDeleteUserId = null">@T("Dashboard.Cancel")</button>
+                <button class="inline-flex items-center justify-center px-4 py-2 rounded border-[1.5px] border-red-800 bg-red-800 text-white text-sm font-semibold cursor-pointer hover:bg-red-900" @onclick="ExecuteDeleteUserAsync">@T("Users.DeleteUser")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private string? _confirmDeleteUserId;
+
+    private string _firstName = string.Empty;
+    private string _lastName = string.Empty;
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private string _role = "Harvester";
+    private int _assignEventId = 0;
+    private string _createMsg = string.Empty;
+    private bool _createError;
+
+    private AppUser? _editingUser;
+    private string _editFirstName = string.Empty;
+    private string _editLastName = string.Empty;
+    private string _editRole = "Harvester";
+    private string _editPassword = string.Empty;
+    private string _editMsg = string.Empty;
+    private bool _editError;
+    private List<Event> _editUserEvents = new();
+    private int _editAddEventId;
+
+    private List<Event> _events = new();
+    private List<(AppUser User, List<string> Roles)> _allUsers = new();
+
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private Func<Task>? _onChangeSub;
+
+    protected override void OnInitialized()
+    {
+        _onChangeSub = () => InvokeAsync(StateHasChanged);
+        Lang.OnChange += _onChangeSub;
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _events = await EventService.GetAllEventsAsync();
+        var activeEvent = await EventService.GetActiveEventAsync();
+        if (activeEvent != null && _assignEventId == 0)
+            _assignEventId = activeEvent.Id;
+
+        var users = await UserManager.Users.OrderBy(u => u.LastName).ToListAsync();
+        _allUsers = new();
+        foreach (var u in users)
+        {
+            var roles = (await UserManager.GetRolesAsync(u)).ToList();
+            _allUsers.Add((u, roles));
+        }
+        _loading = false;
+    }
+
+    private async Task CreateUserAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_username) || string.IsNullOrWhiteSpace(_password))
+        {
+            _createMsg = T("Users.FieldsRequired");
+            _createError = true;
+            return;
+        }
+
+        var user = new AppUser
+        {
+            UserName = _username.Trim(),
+            Email = $"{_username.Trim()}@strawberry.local",
+            FirstName = _firstName.Trim(),
+            LastName = _lastName.Trim(),
+            EmailConfirmed = true
+        };
+
+        var result = await UserManager.CreateAsync(user, _password);
+        if (!result.Succeeded)
+        {
+            _createMsg = string.Join(" ", result.Errors.Select(e => e.Description));
+            _createError = true;
+            return;
+        }
+
+        await UserManager.AddToRoleAsync(user, _role);
+
+        if (_assignEventId > 0)
+            await EventService.AddUserToEventAsync(_assignEventId, user.Id);
+
+        await AuditService.LogAsync("User.Created", $"Username={_username}, Name={_firstName} {_lastName}, Role={_role}");
+
+        _createMsg = T("Users.UserCreated", _firstName, _lastName, _username);
+        _createError = false;
+        _firstName = _lastName = _username = _password = string.Empty;
+        _role = "Harvester";
+        await LoadAsync();
+    }
+
+    private void StartUserEdit(AppUser user, List<string> roles)
+    {
+        _editingUser = user;
+        _editFirstName = user.FirstName;
+        _editLastName = user.LastName;
+        _editRole = roles.FirstOrDefault() ?? "Harvester";
+        _editPassword = string.Empty;
+        _editMsg = string.Empty;
+        _editUserEvents = new();
+        _editAddEventId = 0;
+        _ = LoadUserEventsAsync(user.Id);
+    }
+
+    private async Task LoadUserEventsAsync(string userId)
+    {
+        _editUserEvents = await EventService.GetUserEventsAsync(userId);
+        StateHasChanged();
+    }
+
+    private async Task AddUserToEventAsync()
+    {
+        if (_editingUser == null || _editAddEventId == 0) return;
+        await EventService.AddUserToEventAsync(_editAddEventId, _editingUser.Id);
+        _editUserEvents = await EventService.GetUserEventsAsync(_editingUser.Id);
+        _editAddEventId = 0;
+    }
+
+    private async Task RemoveUserFromEventAsync(int eventId)
+    {
+        if (_editingUser == null) return;
+        await EventService.RemoveUserFromEventAsync(eventId, _editingUser.Id);
+        _editUserEvents = await EventService.GetUserEventsAsync(_editingUser.Id);
+    }
+
+    private async Task SaveUserEditAsync()
+    {
+        if (_editingUser == null) return;
+
+        _editingUser.FirstName = _editFirstName.Trim();
+        _editingUser.LastName = _editLastName.Trim();
+        await UserManager.UpdateAsync(_editingUser);
+
+        var currentRoles = await UserManager.GetRolesAsync(_editingUser);
+        await UserManager.RemoveFromRolesAsync(_editingUser, currentRoles);
+        await UserManager.AddToRoleAsync(_editingUser, _editRole);
+
+        if (!string.IsNullOrWhiteSpace(_editPassword))
+        {
+            var token = await UserManager.GeneratePasswordResetTokenAsync(_editingUser);
+            var result = await UserManager.ResetPasswordAsync(_editingUser, token, _editPassword);
+            if (!result.Succeeded)
+            {
+                _editMsg = string.Join(" ", result.Errors.Select(e => e.Description));
+                _editError = true;
+                return;
+            }
+        }
+
+        await AuditService.LogAsync("User.Updated", $"Username={_editingUser.UserName}, Name={_editFirstName} {_editLastName}, Role={_editRole}, PasswordChanged={!string.IsNullOrWhiteSpace(_editPassword)}");
+
+        _editMsg = T("Users.UserUpdated");
+        _editError = false;
+        _editingUser = null;
+        await LoadAsync();
+    }
+
+    private void ConfirmDeleteUser(string userId) => _confirmDeleteUserId = userId;
+
+    private async Task ExecuteDeleteUserAsync()
+    {
+        if (_confirmDeleteUserId == null) return;
+        var userId = _confirmDeleteUserId;
+        _confirmDeleteUserId = null;
+        var user = await UserManager.FindByIdAsync(userId);
+        if (user == null) return;
+        await AuditService.LogAsync("User.Deleted", $"Username={user.UserName}, Name={user.FirstName} {user.LastName}");
+        await UserManager.DeleteAsync(user);
+        await LoadAsync();
+    }
+
+    private static string RoleBadgeClass(string role) => role switch
+    {
+        "Admin" => "bg-red-50 text-red-800 border-red-300",
+        "DropOff" => "bg-blue-50 text-blue-700 border-blue-200",
+        _ => "bg-green-50 text-green-700 border-green-300"
+    };
+
+    public void Dispose()
+    {
+        if (_onChangeSub != null) Lang.OnChange -= _onChangeSub;
+    }
+}

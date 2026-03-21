@@ -1,0 +1,144 @@
+@page "/Admin/AuditLogs"
+@rendermode InteractiveServer
+@implements IDisposable
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@inject AuditService AuditService
+@inject Microsoft.AspNetCore.Identity.UserManager<Strawberry.Models.AppUser> UserManager
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+
+<PageTitle>@T("AuditLogs.Title") &ndash; @T("AppName")</PageTitle>
+
+<div class="mx-auto w-full max-w-7xl px-4 sm:px-6 py-6">
+
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">@T("AuditLogs.Title")</h1>
+        <p class="text-sm text-gray-500 mt-0.5">@T("AuditLogs.Subtitle")</p>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="flex justify-center py-16"><div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div></div>
+    }
+    else
+    {
+        <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <span class="text-sm text-gray-500">@T("AuditLogs.Showing", _logs.Count)</span>
+                <input class="w-full sm:w-72 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                       type="search"
+                       placeholder="@T("AuditLogs.FilterPlaceholder")"
+                       @bind="_filter" @bind:event="oninput" />
+            </div>
+
+            @{
+                var filtered = string.IsNullOrWhiteSpace(_filter)
+                    ? _logs
+                    : _logs.Where(l =>
+                        l.Action.Contains(_filter, StringComparison.OrdinalIgnoreCase) ||
+                        (l.Details?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+            }
+
+            @if (filtered.Count == 0)
+            {
+                <div class="py-14 text-center text-sm text-gray-400">@T("AuditLogs.NoEntries")</div>
+            }
+            else
+            {
+                <div class="flex flex-col divide-y divide-gray-100 md:hidden">
+                    @foreach (var log in filtered)
+                    {
+                        <div class="px-4 py-3 flex flex-col gap-1.5">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <span class="text-xs text-gray-400">@log.TimestampUtc.ToLocalTime().ToString("dd.MM.yy HH:mm")</span>
+                                <span class="@ActionBadgeClass(log.Action) inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold">@ActionLabel(log.Action)</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(log.Details))
+                            {
+                                <p class="text-xs text-gray-600 bg-gray-50 rounded px-2.5 py-2 break-words leading-relaxed">@ResolveDetails(log.Details)</p>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="hidden md:block overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            <tr>
+                                <th class="px-5 py-3 text-left whitespace-nowrap">@T("AuditLogs.ColTime")</th>
+                                <th class="px-5 py-3 text-left">@T("AuditLogs.ColAction")</th>
+                                <th class="px-5 py-3 text-left">@T("AuditLogs.ColDetails")</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            @foreach (var log in filtered)
+                            {
+                                <tr class="hover:bg-gray-50">
+                                    <td class="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">@log.TimestampUtc.ToLocalTime().ToString("dd.MM.yy HH:mm:ss")</td>
+                                    <td class="px-5 py-3">
+                                        <span class="@ActionBadgeClass(log.Action) inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap">@ActionLabel(log.Action)</span>
+                                    </td>
+                                    <td class="px-5 py-3 text-xs text-gray-600 max-w-sm break-words">@ResolveDetails(log.Details)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private List<AuditLog> _logs = new();
+    private string _filter = string.Empty;
+    private Dictionary<string, string> _userNames = new();
+
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private Func<Task>? _onChangeSub;
+
+    protected override void OnInitialized()
+    {
+        _onChangeSub = () => InvokeAsync(StateHasChanged);
+        Lang.OnChange += _onChangeSub;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _logs = await AuditService.GetRecentAsync(500);
+        var users = UserManager.Users.ToList();
+        _userNames = users.ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.UserName) ? u.Id : u.UserName);
+        _loading = false;
+    }
+
+    private string ResolveDetails(string? details)
+    {
+        if (string.IsNullOrWhiteSpace(details)) return string.Empty;
+        var result = details;
+        foreach (var (id, name) in _userNames)
+            result = result.Replace(id, name, StringComparison.Ordinal);
+        return result;
+    }
+
+    private string ActionLabel(string action)
+    {
+        var key = "AuditLogs.Action." + action;
+        var translated = T(key);
+        return translated == key ? action : translated;
+    }
+
+    private static string ActionBadgeClass(string action)
+    {
+        if (action.StartsWith("User.")) return "bg-blue-100 text-blue-700";
+        if (action.StartsWith("DropOff.") || action.StartsWith("Payout")) return "bg-green-100 text-green-700";
+        if (action.StartsWith("Container.")) return "bg-orange-100 text-orange-700";
+        if (action.StartsWith("Event.")) return "bg-gray-100 text-gray-600";
+        return "bg-gray-100 text-gray-600";
+    }
+
+    public void Dispose()
+    {
+        if (_onChangeSub != null) Lang.OnChange -= _onChangeSub;
+    }
+}

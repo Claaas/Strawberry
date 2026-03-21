@@ -1,0 +1,307 @@
+@page "/Stats"
+@rendermode InteractiveServer
+@implements IDisposable
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@inject EventService EventService
+@inject WeighingService WeighingService
+@inject BalanceService BalanceService
+@inject TranslationService Translation
+@inject UserLanguageService Lang
+
+<PageTitle>@T("Stats.Title") – @T("AppName")</PageTitle>
+
+<div class="mx-auto w-full max-w-7xl px-4 sm:px-6 py-6">
+
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 tracking-tight">@T("Stats.Title")</h1>
+            @if (_selectedEvent is { } sel)
+            {
+                <p class="text-sm text-gray-500 mt-0.5">@sel.Name — @sel.Date.ToLocalTime().ToString("dd MMM yyyy")</p>
+            }
+        </div>
+        @if (_selectedEvent != null)
+        {
+            <button class="inline-flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2 bg-white hover:bg-gray-50 transition-colors" @onclick="ClearSelection">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                @T("Stats.BackToEvents")
+            </button>
+        }
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="flex justify-center py-16"><div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div></div>
+    }
+    else if (_selectedEvent == null)
+    {
+        <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100">
+                <h2 class="text-base font-semibold text-gray-900">@T("Stats.SelectEvent")</h2>
+            </div>
+            @if (_allEvents.Count == 0)
+            {
+                <div class="py-14 text-center text-sm text-gray-500">@T("Stats.NoEvents")</div>
+            }
+            else
+            {
+                <div class="flex flex-col divide-y divide-gray-100 md:hidden">
+                    @foreach (var ev in _allEvents)
+                    {
+                        var summary = _eventSummaries.GetValueOrDefault(ev.Id);
+                        <div class="px-4 py-3.5 flex flex-col gap-2">
+                            <div class="flex items-start justify-between gap-2">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">@ev.Name</p>
+                                    <p class="text-xs text-gray-400 mt-0.5">@ev.Date.ToLocalTime().ToString("dd MMM yyyy")</p>
+                                </div>
+                                @if (ev.IsActive)
+                                {
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700 shrink-0">@T("Dashboard.EventActive")</span>
+                                }
+                                else
+                                {
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 shrink-0">@T("Dashboard.EventClosed")</span>
+                                }
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div class="flex gap-4 text-xs text-gray-500">
+                                    <span><span class="font-mono text-gray-900">@(summary?.TotalWeightKg.ToString("F2") ?? "–") kg</span></span>
+                                    <span><span class="font-mono font-semibold text-gray-900">€ @(summary?.TotalAmount.ToString("0.00") ?? "–")</span></span>
+                                </div>
+                                <button class="text-xs font-semibold text-red-700 hover:underline" @onclick="() => SelectEventAsync(ev)">@T("Stats.ViewDetails")</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="hidden md:block overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            <tr>
+                                <th class="px-5 py-3 text-left">@T("Stats.ColEventName")</th>
+                                <th class="px-5 py-3 text-left">@T("Stats.ColEventDate")</th>
+                                <th class="px-5 py-3 text-left">@T("Stats.ColEventStatus")</th>
+                                <th class="px-5 py-3 text-right">@T("Stats.ColEventWeight")</th>
+                                <th class="px-5 py-3 text-right">@T("Stats.ColEventWeighings")</th>
+                                <th class="px-5 py-3 text-right">@T("Stats.ColEventPayout")</th>
+                                <th class="px-5 py-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            @foreach (var ev in _allEvents)
+                            {
+                                var summary = _eventSummaries.GetValueOrDefault(ev.Id);
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-5 py-3.5 font-medium text-gray-900">@ev.Name</td>
+                                    <td class="px-5 py-3.5 text-gray-600">@ev.Date.ToLocalTime().ToString("dd MMM yyyy")</td>
+                                    <td class="px-5 py-3.5">
+                                        @if (ev.IsActive)
+                                        {
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">@T("Dashboard.EventActive")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">@T("Dashboard.EventClosed")</span>
+                                        }
+                                    </td>
+                                    <td class="px-5 py-3.5 text-right font-mono text-gray-700">@(summary?.TotalWeightKg.ToString("F2") ?? "–") kg</td>
+                                    <td class="px-5 py-3.5 text-right text-gray-700">@(summary?.WeighingCount.ToString() ?? "–")</td>
+                                    <td class="px-5 py-3.5 text-right font-mono font-semibold text-gray-900">€ @(summary?.TotalAmount.ToString("0.00") ?? "–")</td>
+                                    <td class="px-5 py-3.5 text-right">
+                                        <button class="text-xs font-medium text-red-700 hover:underline" @onclick="() => SelectEventAsync(ev)">@T("Stats.ViewDetails")</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm border-l-4 border-l-primary">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">@T("Stats.StatTotalWeight")</p>
+                <p class="text-3xl font-bold text-gray-900 mt-1">@_totalWeight.ToString("F2") <span class="text-lg font-normal text-gray-500">kg</span></p>
+                <p class="text-xs text-gray-400 mt-1">@T("Stats.StatTotalWeightSub")</p>
+            </div>
+            <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm border-l-4 border-l-blue-500">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">@T("Stats.StatWeighings")</p>
+                <p class="text-3xl font-bold text-gray-900 mt-1">@_weighingRecords.Count</p>
+                <p class="text-xs text-gray-400 mt-1">@T("Stats.StatWeighingsSub")</p>
+            </div>
+            <div class="bg-white borderborder-gray-200 rounded-xl p-5 shadow-sm border-l-4 border-l-green-500">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">@T("Stats.StatTotalPayout")</p>
+                <p class="text-3xl font-bold text-gray-900 mt-1 font-mono">€ @_totalPayout.ToString("0.00")</p>
+                <p class="text-xs text-gray-400 mt-1">@T("Stats.StatTotalPayoutSub")</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-100">
+                    <h2 class="text-base font-semibold text-gray-900">@T("Stats.BalancePerHarvester")</h2>
+                </div>
+                @if (_harvesterBalances.Count == 0)
+                {
+                    <div class="py-10 text-center text-sm text-gray-400">@T("Stats.NoData")</div>
+                }
+                else
+                {
+                    <ul class="divide-y divide-gray-100">
+                        @foreach (var (user, balance) in _harvesterBalances)
+                        {
+                            <li class="flex items-center justify-between px-5 py-3.5">
+                                <div>
+                                    <p class="text-sm font-medium text-gray-900">@user.FirstName @user.LastName</p>
+                                    <p class="text-xs text-gray-400">@user.UserName</p>
+                                </div>
+                                <span class="font-mono font-semibold text-green-700">€ @balance.ToString("0.00")</span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-100">
+                    <h2 class="text-base font-semibold text-gray-900">@T("Stats.RecentWeighings")</h2>
+                </div>
+                @if (_weighingRecords.Count == 0)
+                {
+                    <div class="py-10 text-center text-sm text-gray-400">@T("Stats.NoWeighings")</div>
+                }
+                else
+                {
+                    <div class="flex flex-col divide-y divide-gray-100 md:hidden">
+                        @foreach (var w in _weighingRecords)
+                        {
+                            <div class="px-4 py-3 flex flex-col gap-1">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs text-gray-400">@w.TimestampUtc.ToLocalTime().ToString("dd MMM HH:mm")</span>
+                                    <span class="font-mono font-semibold text-gray-900 text-sm">€ @w.AmountPaid.ToString("0.00")</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm text-gray-700">@(w.AssignedUserNameAtTime ?? (w.Container.AssignedUser != null ? $"{w.Container.AssignedUser.FirstName} {w.Container.AssignedUser.LastName}" : "–"))</span>
+                                    <span class="text-xs font-mono text-gray-500">@w.Container.QrCode &middot; @w.WeightKg.ToString("F2") kg</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="hidden md:block overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                <tr>
+                                    <th class="px-4 py-3 text-left">@T("Stats.ColTime")</th>
+                                    <th class="px-4 py-3 text-left">@T("Stats.ColContainer")</th>
+                                    <th class="px-4 py-3 text-left">@T("Stats.ColHarvester")</th>
+                                    <th class="px-4 py-3 text-right">@T("Stats.ColWeight")</th>
+                                    <th class="px-4 py-3 text-right">@T("Stats.ColAmount")</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                @foreach (var w in _weighingRecords)
+                                {
+                                    <tr class="hover:bg-gray-50">
+                                        <td class="px-4 py-3 text-gray-500 whitespace-nowrap">@w.TimestampUtc.ToLocalTime().ToString("dd MMM HH:mm")</td>
+                                        <td class="px-4 py-3 font-mono text-gray-700">@w.Container.QrCode</td>
+                                        <td class="px-4 py-3 text-gray-700">@(w.AssignedUserNameAtTime ?? (w.Container.AssignedUser != null ? $"{w.Container.AssignedUser.FirstName} {w.Container.AssignedUser.LastName}" : "–"))</td>
+                                        <td class="px-4 py-3 text-right font-mono text-gray-700">@w.WeightKg.ToString("F2") kg</td>
+                                        <td class="px-4 py-3 text-right font-mono font-semibold text-gray-900">€ @w.AmountPaid.ToString("0.00")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private List<Event> _allEvents = new();
+    private Dictionary<int, EventSummary> _eventSummaries = new();
+    private Event? _selectedEvent;
+    private List<WeighingRecord> _weighingRecords = new();
+    private List<(AppUser User, decimal Balance)> _harvesterBalances = new();
+    private decimal _totalWeight;
+    private decimal _totalPayout;
+
+    private record EventSummary(decimal TotalWeightKg, int WeighingCount, decimal TotalAmount);
+
+    private string T(string key, params object[] args) => Translation.T(Lang.Language, key, args);
+    private Func<Task>? _onChangeSub;
+
+    protected override void OnInitialized()
+    {
+        _onChangeSub = () => InvokeAsync(StateHasChanged);
+        Lang.OnChange += _onChangeSub;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await LoadEventsOverviewAsync();
+    }
+
+    private async Task LoadEventsOverviewAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+        try
+        {
+            _allEvents = await EventService.GetAllEventsAsync() ?? new();
+            _eventSummaries.Clear();
+            foreach (var ev in _allEvents)
+            {
+                var w = await WeighingService.GetTotalWeightAsync(ev.Id);
+                var c = await WeighingService.GetWeighingCountAsync(ev.Id);
+                var a = await WeighingService.GetTotalAmountAsync(ev.Id);
+                _eventSummaries[ev.Id] = new EventSummary(w, c, a);
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectEventAsync(Event ev)
+    {
+        _selectedEvent = ev;
+        _isLoading = true;
+        StateHasChanged();
+        try
+        {
+            _weighingRecords = await WeighingService.GetWeighingRecordsAsync(ev.Id) ?? new();
+            _harvesterBalances = await BalanceService.GetAllBalancesAsync(ev.Id) ?? new();
+            _totalPayout = await WeighingService.GetTotalAmountAsync(ev.Id);
+            _totalWeight = _weighingRecords.Sum(w => w.WeightKg);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearSelection()
+    {
+        _selectedEvent = null;
+        _weighingRecords.Clear();
+        _harvesterBalances.Clear();
+        _totalWeight = 0;
+        _totalPayout = 0;
+    }
+
+    public void Dispose()
+    {
+        if (_onChangeSub != null) Lang.OnChange -= _onChangeSub;
+    }
+}
